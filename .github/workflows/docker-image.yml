@@ -22,14 +22,51 @@ jobs:
         password: ${{ secrets.QUAY_ROBOT_PASSWORD }}
 
     - uses: actions/checkout@v4
+
     - name: Build the Docker image
       run: |
         docker build . --file Dockerfile --tag quay.io/abitocchi/kubeinvaders:latest
         docker push quay.io/abitocchi/kubeinvaders:latest
 
+  setup-cluster:
+    runs-on: ubuntu-latest
+
+    steps:
     - name: Start minikube
       uses: medyagh/setup-minikube@latest
+      with:
+        driver: docker
+        kubernetes-version: v1.26.3
+        cpus: 4
+        memory: 2048m
 
     - name: Try the cluster!
       run: kubectl get pods -A
+
+    - name: Deploy example
+      run: kubectl apply -f minikube-setup/manifests
+
+  helm-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Deploy with helm
+      uses: 'deliverybot/helm@v1'
+      with:
+        release: 'kubeinvaders'
+        namespace: 'kubeinvaders'
+        chart: 'helm-chart/kubeinvaders'
+        values: |
+          config:
+            target_namespace: "ns-1"
+
+          ingress:
+            enabled: true
+            hostName: kubeinvaders.local
+
+          deployment:
+            image:
+              repository: quay.io/abitocchi/kubeinvaders
+              tag: latest
+
 
