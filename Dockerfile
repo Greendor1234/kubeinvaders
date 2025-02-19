@@ -1,32 +1,54 @@
 FROM nginx:stable
 
 # Update repo and install some utilities and prerequisites
-RUN apt-get update -y
-RUN apt-get -y install wget at procps gnupg ca-certificates jq openssl task-spooler apt-transport-https python3 python3-pip redis libssl-dev  python3-yaml python3-kubernetes python3-redis python3-requests
+RUN apt-get update -y \
+    && apt-get -y install \
+        at \
+        jq \
+        wget \
+        gnupg \
+        redis \
+        procps \
+        openssl \
+        python3 \
+        libssl-dev \
+        python3-pip \
+        task-spooler \
+        python3-yaml \
+        python3-redis \
+        ca-certificates \
+        python3-requests \
+        python3-kubernetes \
+        apt-transport-https \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install kubectl
-RUN curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl"
-RUN chmod +x ./kubectl
-RUN mv ./kubectl /usr/local/bin/kubectl
+RUN curl -LO "https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x ./kubectl \
+    && mv ./kubectl /usr/local/bin/kubectl
 
 # Install Openresty
 RUN wget -O - https://openresty.org/package/pubkey.gpg | apt-key add -
 RUN codename=`grep -Po 'VERSION="[0-9]+ \(\K[^)]+' /etc/os-release` && echo "deb http://openresty.org/package/debian $codename openresty" | tee /etc/apt/sources.list.d/openresty.list
-RUN apt-get update -y
-RUN apt-get -y install openresty
-RUN chmod 777 /usr/local/openresty/nginx
+RUN apt-get update -y \
+    && apt-get -y install openresty \
+    && chmod 777 /usr/local/openresty/nginx
 
 # Install LUA Module
-RUN apt-get -y install luarocks lua-json lua-socket libyaml-dev
-RUN apt-get update --fix-missing
+RUN apt-get -y install luarocks lua-json lua-socket libyaml-dev \
+    && apt-get update --fix-missing \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN for pkg in luasec lunajson lua-resty-http lyaml lua-resty-openssl; do luarocks install $pkg; done
 
 # Install kube-linter
 RUN curl -L -O https://github.com/stackrox/kube-linter/releases/download/0.6.0/kube-linter-linux.tar.gz
-RUN tar -xvf kube-linter-linux.tar.gz && rm -f kube-linter-linux.tar.gz
-RUN cp kube-linter /usr/local/bin/ && chmod 775 /usr/local/bin/kube-linter
-RUN mkdir /tmp/kube-linter-pods && chmod 777 /tmp/kube-linter-pods
+RUN tar -xvf kube-linter-linux.tar.gz \
+    && rm -f kube-linter-linux.tar.gz \
+    && cp kube-linter /usr/local/bin/ \
+    && chmod 775 /usr/local/bin/kube-linter \
+    && mkdir /tmp/kube-linter-pods \
+    && chmod 777 /tmp/kube-linter-pods
 
 # Installl parser script for kubelinter
 COPY kube-linter/kube-linter-parser.sh /opt/kube-linter-parser.sh
@@ -72,7 +94,5 @@ ENV PATH=/usr/local/openresty/nginx/sbin:$PATH
 COPY ./entrypoint.sh /
 
 RUN chmod a+rwx ./entrypoint.sh
-
-RUN apt clean && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/entrypoint.sh"]
