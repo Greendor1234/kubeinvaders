@@ -46,7 +46,6 @@ jobs:
     - name: Deploy with helm
       run: |
         helm upgrade --install \
-          --atomic \
           kubeinvaders \
           -n kubeinvaders \
           --create-namespace \
