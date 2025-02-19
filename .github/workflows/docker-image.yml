@@ -28,20 +28,6 @@ jobs:
         docker build . --file Dockerfile --tag quay.io/abitocchi/kubeinvaders:latest
         docker push quay.io/abitocchi/kubeinvaders:latest
 
-    - name: Deploy with helm
-      run: |
-        helm upgrade --install kubeinvaders \
-          --set-string config.target_namespace="ns-1" \
-          -n kubeinvaders \
-          helm-charts/kubeinvaders \
-          --set ingress.enabled=true \
-          --set ingress.hostName=kubeinvaders.local \
-          --set deployment.image.tag=$(image_tag) \
-
-  setup-cluster:
-    runs-on: ubuntu-latest
-
-    steps:
     - name: Start minikube
       uses: medyagh/setup-minikube@latest
       with:
@@ -55,5 +41,15 @@ jobs:
 
     - name: Deploy example
       run: kubectl apply -f minikube-setup/manifests
+
+    - name: Deploy with helm
+      run: |
+        helm upgrade --install kubeinvaders \
+          --set-string config.target_namespace="ns-1" \
+          -n kubeinvaders \
+          helm-charts/kubeinvaders \
+          --set ingress.enabled=true \
+          --set ingress.hostName=kubeinvaders.local \
+          --set deployment.image.tag=$(image_tag)
 
 
