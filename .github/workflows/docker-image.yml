@@ -1,0 +1,29 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Login to Quay.io
+      uses: docker/login-action@v2
+      if: github.repository_owner == 'Greendor1234'
+      with:
+        registry: quay.io
+        username: ${{ secrets.QUAY_ROBOT_USERNAME }}
+        password: ${{ secrets.QUAY_ROBOT_PASSWORD }}
+
+    - uses: actions/checkout@v4
+    - name: Build the Docker image
+      run: |
+        docker build . --file Dockerfile --tag quay.io/abitocchi/kubeinvaders:latest
+        docker push quay.io/abitocchi/kubeinvaders:latest
+
