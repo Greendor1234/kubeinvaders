@@ -37,7 +37,7 @@ def do_http_request(url: str, method: str, headers: dict, data: dict) -> request
         logging.error(f"Error while sending HTTP request: {e}")
         return "Connection Error"
 
-def check_if_json_is_valid(json_data: dict):
+def check_if_json_is_valid(json_data: dict) -> bool:
     """
     Try to load a JSON with the json library, if catch an exception return false
     """
@@ -47,7 +47,7 @@ def check_if_json_is_valid(json_data: dict):
         return False
     return True
 
-def collect_data_for_projects(key_project_list="chaos_report_project_list"):
+def collect_data_for_projects(key_project_list="chaos_report_project_list") -> None:
     """
     For each project in a list check if exists the correspondent key in redis and performs
     an http request against the url specified, retrieves basic informations of the request
@@ -95,7 +95,7 @@ def compare_time(
         pod_time: int, 
         pod_time_key: str, 
         log_kinv_suffix: str,
-    ):
+    ) -> None:
     """
     Perform a check between the current timestamp and the pod timestamp, if the difference
     is major than 120 it tries to delete the pod from kubernetes and the key from redis
@@ -110,7 +110,7 @@ def compare_time(
         except ApiException as e:
             logging.debug(e)
 
-def pod_computation(pod, api_instance):
+def pod_computation(pod, api_instance) -> None:
     """
     Check the pod status and update the redis keys according to checked status 
     """
@@ -184,8 +184,9 @@ if __name__ == "__main__":
             collect_data_for_projects()
 
         try:
-            label_selector = "chaos-controller=kubeinvaders"
-            api_response   = api_instance.list_pod_for_all_namespaces(label_selector=label_selector)
+            api_response = api_instance.list_pod_for_all_namespaces(
+                label_selector = "chaos-controller=kubeinvaders"
+            )
         except ApiException as e:
             logging.debug(e)
 

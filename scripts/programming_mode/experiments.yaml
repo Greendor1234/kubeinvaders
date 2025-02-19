@@ -1,10 +1,11 @@
-jobs:
-  cpu_attack:
+chaos-codename: beautyfull-codename
+k8s_jobs:
+  cpu-attack:
     image: docker.io/luckysideburn/kubeinvaders-stress-ng:latest
     command: "stress-ng"
     args:
       - --help
-  mem_attack:
+  mem-attack:
     image: docker.io/luckysideburn/kubeinvaders-stress-ng:latest
     command: "stress-ng"
     additional-labels:
@@ -13,14 +14,14 @@ jobs:
       - --help
 experiments:
   - name: cpu_attack_exp
-    job: cpu_attack
+    k8s_job: cpu-attack
     loop: 5
     after:
       check_url: https://google.it
       check_payload: ''
       check_tls_ignore: true
   - name: mem_attack_exp
-    job: mem_attack
+    k8s_job: mem-attack
     loop: 5
     after:
       check_url: https://google.it
