@@ -14,10 +14,13 @@ import yaml
 import redis
 import string
 import random
+import urllib3
 import logging
 
 from kubernetes import client
 from kubernetes.client.rest import ApiException
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def create_container(image: str, name: str, command: str, args):
     """
@@ -32,8 +35,8 @@ def create_container(image: str, name: str, command: str, args):
     )
 
     logging.info(
-        f"[PROGRAMMING_MODE] Created container with name: {container.name}, "
-        f"[PROGRAMMING_MODE] Image: {container.image} and Args: {container.args}"
+        f"Created container with name: {container.name}, "
+        f"Image: {container.image} and Args: {container.args}"
     )
     return container
 
@@ -89,18 +92,21 @@ def parse_yaml():
     """
     with open(sys.argv[1], 'r') as stream:
         try:
-            logging.info('[PROGRAMMING_MODE] Trying to parse chaos program...')
+            logging.info('Trying to parse chaos program...')
             return yaml.safe_load(stream)
         except yaml.YAMLError as e:
-            logging.error(f"[PROGRAMMING_MODE] Invalid YAML syntax, please fix choas program code cause: {e}")
+            logging.error(f"Invalid YAML syntax, please fix choas program code cause: {e}")
             quit()
 
 if __name__ == "__main__":
-    logging.basicConfig(level = os.environ.get("LOGLEVEL", "INFO"))
-    logging.info('[PROGRAMMING_MODE] Starting script...')
+    logging.basicConfig(
+        level  = os.environ.get("LOGLEVEL", "INFO"),
+        format = "%(asctime)s [PROGRAMMING_MODE] %(message)s"
+    )
+    logging.info('Starting script...')
 
     if os.path.exists(sys.argv[1]) == False:
-        logging.error("[PROGRAMMING_MODE] Chaos program not found, please check the path...")
+        logging.error("Chaos program not found, please check the path...")
         exit(1)
 
     parsed_yaml = parse_yaml()
@@ -127,22 +133,22 @@ if __name__ == "__main__":
     for job in parsed_yaml["k8s_jobs"]:
         logging.info(f"Found job {job}")
         if not re.fullmatch(k8s_regex, job):
-            ret = f"[PROGRAMMING_MODE] Invalid name for k8s_jobs: {job}, please match Kubernetes name format '[a-z0-9]([-a-z0-9]*[a-z0-9])?'"
+            ret = f"Invalid name for k8s_jobs: {job}, please match Kubernetes name format '[a-z0-9]([-a-z0-9]*[a-z0-9])?'"
             logging.info(ret)
             quit()
         
     for exp in parsed_yaml["experiments"]:
 
         for times in range(exp["loop"]):
-            logging.info(f"[PROGRAMMING_MODE] Processing the experiment {exp}, iteration: {times}")
+            logging.info(f"Processing the experiment {exp}, iteration: {times}")
 
             job_attrs = parsed_yaml["k8s_jobs"][exp["k8s_job"]]
             args      = [ str(arg) for arg in job_attrs['args'] ]
 
-            logging.info(f"[PROGRAMMING_MODE] args = {args}, command = {job_attrs['command']}, image = {job_attrs['image']}, k8s_job = {exp['k8s_job']}")
+            logging.info(f"args = {args}, command = {job_attrs['command']}, image = {job_attrs['image']}, k8s_job = {exp['k8s_job']}")
 
             if not re.fullmatch(prom_regex, exp["name"]):
-                ret = f"[PROGRAMMING_MODE] Invalid name for experiment: {exp['name']}, please match Prometheus metric name format '[a-zA-Z_:][a-zA-Z0-9_:]*'"
+                ret = f"Invalid name for experiment: {exp['name']}, please match Prometheus metric name format '[a-zA-Z_:][a-zA-Z0-9_:]*'"
                 logging.info(ret)
                 quit()
 
@@ -168,10 +174,10 @@ if __name__ == "__main__":
 
             try:
                 batch_api.create_namespaced_job('kubeinvaders', job_def)
-                logging.info(f"[PROGRAMMING_MODE] Job {job_name} created successfully")
+                logging.info(f"Job {job_name} created successfully")
 
             except ApiException as e:
-                logging.info(f"[PROGRAMMING_MODE] Error creating job: {e}")
+                logging.info(f"Error creating job: {e}")
                 quit()
 
             metric_job_name = job_name.replace("-","_")
