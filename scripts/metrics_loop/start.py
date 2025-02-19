@@ -23,7 +23,15 @@ def do_http_request(url: str, method: str, headers: dict, data: dict) -> request
     Perform an http request and returns the response if ok else returns an error string
     """
     try:
-        response = requests.request(method, url, headers=headers, data=data, verify=False, allow_redirects=True, timeout=10)
+        response = requests.request(
+            method,
+            url,
+            timeout         = 10,
+            data            = data,
+            verify          = False,
+            allow_redirects = True, 
+            headers         = headers
+        )
         return response
     except requests.exceptions.RequestException as e:
         logging.error(f"Error while sending HTTP request: {e}")
@@ -127,8 +135,8 @@ def pod_computation(pod, api_instance):
         compare_time(
             pod, 
             now, 
-            pod_time, 
             api_instance,
+            pod_time,
             pod_time_key, 
             log_kinv_suffix, 
         )
