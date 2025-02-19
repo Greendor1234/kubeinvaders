@@ -6,16 +6,9 @@ on:
   pull_request:
     branches: [ "master" ]
 
-
-if: github.event.action == 'pull_request'
 env:
-  IMAGE_TAG: "latest-pull-request"
-
-if: github.event.action == 'push'
-env:
-  IMAGE_TAG: "latest"
+  IMAGE_TAG: ${{ github.event.action == "push" && 'latest' || 'latest-pull-request' }}
   
-
 jobs:
 
   build:
