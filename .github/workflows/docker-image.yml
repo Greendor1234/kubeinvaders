@@ -49,7 +49,8 @@ jobs:
           --set-string config.target_namespace="ns-1" \
           -n kubeinvaders \
           helm-charts/kubeinvaders \
-          --atomic
+          --atomic \
+          --create-namespace \
           --set ingress.enabled=true \
           --set ingress.hostName=kubeinvaders.local \
           --set deployment.image.tag=latest \
