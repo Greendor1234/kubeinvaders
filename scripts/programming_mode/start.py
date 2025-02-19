@@ -40,7 +40,7 @@ def create_container(image: str, name: str, command: str, args):
     )
     return container
 
-def create_pod_template(pod_name: str, additional_labels: dict, container, exp_name: str):
+def create_pod_template(pod_name: str, additional_labels: dict, container, exp_name: str, codename: str):
     """
     Create a pod template with specific configuration passed as parameters
     """
@@ -63,7 +63,7 @@ def create_pod_template(pod_name: str, additional_labels: dict, container, exp_n
     )
     return pod_template
 
-def create_job(job_name: str, pod_template):
+def create_job(job_name: str, pod_template, codename: str):
     """
     Create a job with specific configuration passed as parameters
     """
@@ -132,12 +132,12 @@ def perform_experiment(exp: dict, parsed_yaml: dict):
 
         if 'additional-labels' in job_attrs:
             logging.info(f"additional-labels = {job_attrs['additional-labels']}")
-            pod_template = create_pod_template(f"{exp['k8s_job']}_exec", job_attrs['additional-labels'], container, exp['name'])
+            pod_template = create_pod_template(f"{exp['k8s_job']}_exec", job_attrs['additional-labels'], container, exp['name'], codename)
         else:
-            pod_template = create_pod_template(f"{exp['k8s_job']}_exec", {}, container, exp['k8s_job'])
+            pod_template = create_pod_template(f"{exp['k8s_job']}_exec", {}, container, exp['k8s_job'], codename)
         
         logging.info(f"Creating job {job_name}")
-        job_def = create_job(job_name, pod_template)
+        job_def = create_job(job_name, pod_template, codename)
 
         try:
             batch_api.create_namespaced_job(namespace, job_def)
