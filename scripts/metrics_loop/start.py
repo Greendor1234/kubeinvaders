@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""
+This is a helper that allows to monitor the pods used to perform chaos engineering with the Programming Mode
+"""
 import os
 import sys
 import json
@@ -15,10 +18,10 @@ from kubernetes.client.rest import ApiException
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def join_string_to_array(project_list_string, separator):
-    return project_list_string.split(separator)
-
-def do_http_request(url, method, headers, data):
+def do_http_request(url: str, method: str, headers: dict, data: dict) -> requests.Response | str:
+    """
+    Perform an http request and returns the response if ok else returns an error string
+    """
     try:
         response = requests.request(method, url, headers=headers, data=data, verify=False, allow_redirects=True, timeout=10)
         return response
@@ -26,72 +29,15 @@ def do_http_request(url, method, headers, data):
         logging.error(f"Error while sending HTTP request: {e}")
         return "Connection Error"
 
-def check_if_json_is_valid(json_data):
+def check_if_json_is_valid(json_data: dict):
+    """
+    Try to load a JSON with the json library, if catch an exception return false
+    """
     try:
         json.loads(json_data)
-    except ValueError as e:
+    except ValueError:
         return False
     return True
-
-def create_container(image, name, command, args):
-    """
-    TBD
-    """
-    container = client.V1Container(
-        image             = image,
-        name              = name,
-        image_pull_policy = 'IfNotPresent',
-        args              = args,
-        command           = command,
-    )
-
-    logging.debug(
-        f"Created container with name: {container.name}, "
-        f"image: {container.image} and args: {container.args}"
-    )
-
-    return container
-
-def create_pod_template(pod_name, container, job_name):
-    """
-    TBD
-    """
-    pod_template = client.V1PodTemplateSpec(
-
-        spec     = client.V1PodSpec(
-            restart_policy = "Never", 
-            containers     = [container]
-            ),
-
-        metadata = client.V1ObjectMeta(
-            name   = pod_name, 
-            labels = {
-                "chaos-controller": "kubeinvaders", 
-                "job-name": job_name
-            }),
-    )
-
-    return pod_template
-
-def create_job(job_name, pod_template):
-    """
-    TBD
-    """
-    metadata = client.V1ObjectMeta(
-        name   = job_name, 
-        labels = {"chaos-controller": "kubeinvaders"}
-    )
-
-    job = client.V1Job(
-        api_version = "batch/v1",
-        kind        = "Job",
-        metadata    = metadata,
-        spec        = client.V1JobSpec(
-            backoff_limit = 0, 
-            template      = pod_template
-        ),
-    )
-    return job
 
 def collect_data_for_projects():
     """
@@ -99,7 +45,7 @@ def collect_data_for_projects():
     an http request against the url specified, retrieves basic informations of the request
     and register the collected data into redis
     """
-    for project in join_string_to_array(r.get('chaos_report_project_list').decode(), ','):
+    for project in r.get('chaos_report_project_list').decode().split(','):
         chaos_program_key = f"chaos_report_project_{project}"
 
         if r.exists(chaos_program_key) and check_if_json_is_valid(r.get(chaos_program_key)):
@@ -159,6 +105,8 @@ if __name__ == "__main__":
 
     while True:
 
+        logging.debug("Checking...")
+
         if r.exists('chaos_report_project_list'):
             collect_data_for_projects()
 
@@ -171,33 +119,42 @@ if __name__ == "__main__":
         r.set("current_chaos_job_pod", 0)
 
         for pod in api_response.items:
-            if pod.status.phase == "Pending" or pod.status.phase == "Running":
+    
+            if pod.status.phase in ['Pending', 'Running']:
                 logging.debug(f"[k-inv][metrics_loop] Found pod {pod.metadata.name}. It is in {pod.status.phase} phase. Incrementing current_chaos_job_pod Redis key")
                 r.incr('current_chaos_job_pod')
-            
-            if pod.status.phase != "Pending" and pod.status.phase != "Running" and not r.exists(f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}"):
-                logging.debug(f"[k-inv][metrics_loop] Found pod {pod.metadata.name}. It is in {pod.status.phase} phase. Tracking time in pod:time:{pod.metadata.namespace}:{pod.metadata.name} Redis key")
-                r.set(f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}", int(time.time()))
 
-            elif pod.status.phase != "Pending" and pod.status.phase != "Running" and r.exists(f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}"):
+            pod_time_key = f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}"
+
+            if pod.status.phase not in ['Pending', 'Running'] and not r.exists(pod_time_key):
+                logging.debug(f"[k-inv][metrics_loop] Found pod {pod.metadata.name}. It is in {pod.status.phase} phase. Tracking time in pod:time:{pod.metadata.namespace}:{pod.metadata.name} Redis key")
+                r.set(pod_time_key, int(time.time()))
+            elif pod.status.phase not in ['Pending', 'Running'] and r.exists(pod_time_key):
                 logging.debug(f"[k-inv][metrics_loop] Found pod {pod.metadata.name}. It is in {pod.status.phase} phase. Comparing time in pod:time:{pod.metadata.namespace}:{pod.metadata.name} Redis key with now")
-                now = int(time.time())
-                pod_time = int(r.get(f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}"))
+                
+                now      = int(time.time())
+                pod_time = int(r.get(pod_time_key))
+
                 logging.debug(f"[k-inv][metrics_loop] For {pod.metadata.name} comparing now:{now} with pod_time:{pod_time}")
+
                 if (now - pod_time > 120):
                     try:
                         api_instance.delete_namespaced_pod(pod.metadata.name, namespace = pod.metadata.namespace)
                         logging.debug(f"[k-inv][metrics_loop] Deleting pod {pod.metadata.name}")
-                        r.delete(f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}")
+                        r.delete(pod_time_key)
                     except ApiException as e:
                         logging.debug(e)
-            if pod.metadata.labels.get('chaos-codename') != None:
+
+            if pod.metadata.labels.get('chaos-codename'):
                 codename = pod.metadata.labels.get('chaos-codename')
                 job_name = pod.metadata.labels.get('job-name').replace("-","_")
                 exp_name = pod.metadata.labels.get('experiment-name')
+
                 if pod.status.phase in ["Pending", "Running", "Succeeded"]:
                     r.set(f"chaos_jobs_status:{codename}:{exp_name}:{job_name}", 1.0)
                 else:
                     r.set(f"chaos_jobs_status:{codename}:{exp_name}:{job_name}", -1)
+
                 r.set(f"chaos_jobs_pod_phase:{codename}:{exp_name}:{job_name}", pod.status.phase)
+
         time.sleep(1)
