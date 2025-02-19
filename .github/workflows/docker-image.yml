@@ -6,6 +6,16 @@ on:
   pull_request:
     branches: [ "master" ]
 
+
+if: github.event.action == 'pull_request'
+env:
+  IMAGE_TAG: "latest-pull-request"
+
+if: github.event.action == 'push'
+env:
+  IMAGE_TAG: "latest"
+  
+
 jobs:
 
   build:
@@ -24,8 +34,8 @@ jobs:
 
     - name: Build the Docker image
       run: |
-        docker build . --file Dockerfile --tag ${{ vars.REGISTRY_ADDRESS }}/${{ vars.REGISTRY_USERNAME }}/kubeinvaders:latest
-        docker push ${{ vars.REGISTRY_ADDRESS }}/${{ vars.REGISTRY_USERNAME }}/kubeinvaders:latest
+        docker build . --file Dockerfile --tag ${{ vars.REGISTRY_ADDRESS }}/${{ vars.REGISTRY_USERNAME }}/kubeinvaders:${{ env.IMAGE_TAG }}
+        docker push ${{ vars.REGISTRY_ADDRESS }}/${{ vars.REGISTRY_USERNAME }}/kubeinvaders:${{ env.IMAGE_TAG }}
 
     - name: Start minikube
       uses: medyagh/setup-minikube@latest
