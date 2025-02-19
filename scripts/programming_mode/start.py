@@ -98,6 +98,63 @@ def parse_yaml():
             logging.error(f"Invalid YAML syntax, please fix choas program code cause: {e}")
             quit()
 
+def perform_experiment(exp: dict, parsed_yaml: dict):
+    """
+    It creates inside the cluster the jobs defined in the yaml
+    """
+    namespace = "kubeinvaders"
+    prom_regex = "[a-zA-Z_:][a-zA-Z0-9_:]*"
+    codename   = parsed_yaml["chaos-codename"]
+
+    for times in range(exp["loop"]):
+        logging.info(f"Processing the experiment {exp}, iteration: {times}")
+
+        job_attrs = parsed_yaml["k8s_jobs"][exp["k8s_job"]]
+        args      = [ str(arg) for arg in job_attrs['args'] ]
+
+        logging.info(f"args = {args}, command = {job_attrs['command']}, image = {job_attrs['image']}, k8s_job = {exp['k8s_job']}")
+
+        if not re.fullmatch(prom_regex, exp["name"]):
+            ret = f"Invalid name for experiment: {exp['name']}, please match Prometheus metric name format '[a-zA-Z_:][a-zA-Z0-9_:]*'"
+            logging.info(ret)
+            quit()
+
+        container = create_container(
+            image   = job_attrs['image'], 
+            name    = exp['k8s_job'],
+            command = [job_attrs['command']],
+            args    = args
+        )
+        
+        letters     = string.ascii_lowercase
+        rand_suffix = ''.join(random.choice(letters) for i in range(5))
+        job_name    = f"{exp['k8s_job']}-{rand_suffix}"
+
+        if 'additional-labels' in job_attrs:
+            logging.info(f"additional-labels = {job_attrs['additional-labels']}")
+            pod_template = create_pod_template(f"{exp['k8s_job']}_exec", job_attrs['additional-labels'], container, exp['name'])
+        else:
+            pod_template = create_pod_template(f"{exp['k8s_job']}_exec", {}, container, exp['k8s_job'])
+        
+        logging.info(f"Creating job {job_name}")
+        job_def = create_job(job_name, pod_template)
+
+        try:
+            batch_api.create_namespaced_job(namespace, job_def)
+            logging.info(f"Job {job_name} created successfully")
+
+        except ApiException as e:
+            logging.info(f"Error creating job: {e}")
+            quit()
+
+        metric_job_name = job_name.replace("-","_")
+        r.set(f"chaos_jobs_status:{codename}:{exp['name']}:{metric_job_name}", 0.0)
+        
+        if r.exists('chaos_node_jobs_total') == 1:
+            r.incr('chaos_node_jobs_total')
+        else:
+            r.set("chaos_node_jobs_total", 1)
+
 if __name__ == "__main__":
     logging.basicConfig(
         level  = os.environ.get("LOGLEVEL", "INFO"),
@@ -113,10 +170,12 @@ if __name__ == "__main__":
 
     r = redis.Redis(unix_socket_path='/tmp/redis.sock')
 
-    configuration = client.Configuration()
     token = os.environ["TOKEN"]
+
+    configuration = client.Configuration()
     configuration.api_key = {"authorization": f"Bearer {token}"}
     configuration.host = sys.argv[2]
+
     configuration.insecure_skip_tls_verify = True
     configuration.verify_ssl = False
 
@@ -125,10 +184,8 @@ if __name__ == "__main__":
 
     api_instance = client.CoreV1Api()
     batch_api    = client.BatchV1Api()
-    namespace = "kubeinvaders"
-    k8s_regex = "[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-    prom_regex = "[a-zA-Z_:][a-zA-Z0-9_:]*"
-    codename = parsed_yaml["chaos-codename"]
+
+    k8s_regex  = "[a-z0-9]([-a-z0-9]*[a-z0-9])?"
 
     for job in parsed_yaml["k8s_jobs"]:
         logging.info(f"Found job {job}")
@@ -138,53 +195,6 @@ if __name__ == "__main__":
             quit()
         
     for exp in parsed_yaml["experiments"]:
+        perform_experiment(exp, parsed_yaml)
 
-        for times in range(exp["loop"]):
-            logging.info(f"Processing the experiment {exp}, iteration: {times}")
-
-            job_attrs = parsed_yaml["k8s_jobs"][exp["k8s_job"]]
-            args      = [ str(arg) for arg in job_attrs['args'] ]
-
-            logging.info(f"args = {args}, command = {job_attrs['command']}, image = {job_attrs['image']}, k8s_job = {exp['k8s_job']}")
-
-            if not re.fullmatch(prom_regex, exp["name"]):
-                ret = f"Invalid name for experiment: {exp['name']}, please match Prometheus metric name format '[a-zA-Z_:][a-zA-Z0-9_:]*'"
-                logging.info(ret)
-                quit()
-
-            container = create_container(
-                image   = job_attrs['image'], 
-                name    = exp['k8s_job'],
-                command = [job_attrs['command']],
-                args    = args
-            )
-            
-            letters     = string.ascii_lowercase
-            rand_suffix = ''.join(random.choice(letters) for i in range(5))
-            job_name    = f"{exp['k8s_job']}-{rand_suffix}"
-
-            if 'additional-labels' in job_attrs:
-                logging.info(f"additional-labels = {job_attrs['additional-labels']}")
-                pod_template = create_pod_template(f"{exp['k8s_job']}_exec", job_attrs['additional-labels'], container, exp['name'])
-            else:
-                pod_template = create_pod_template(f"{exp['k8s_job']}_exec", {}, container, exp['k8s_job'])
-            
-            logging.info(f"Creating job {job_name}")
-            job_def = create_job(job_name, pod_template)
-
-            try:
-                batch_api.create_namespaced_job('kubeinvaders', job_def)
-                logging.info(f"Job {job_name} created successfully")
-
-            except ApiException as e:
-                logging.info(f"Error creating job: {e}")
-                quit()
-
-            metric_job_name = job_name.replace("-","_")
-            r.set(f"chaos_jobs_status:{codename}:{exp['name']}:{metric_job_name}", 0.0)
-            
-            if r.exists('chaos_node_jobs_total') == 1:
-                r.incr('chaos_node_jobs_total')
-            else:
-                r.set("chaos_node_jobs_total", 1)
     os.remove(sys.argv[1])
