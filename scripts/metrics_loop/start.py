@@ -39,13 +39,13 @@ def check_if_json_is_valid(json_data: dict):
         return False
     return True
 
-def collect_data_for_projects():
+def collect_data_for_projects(key_project_list="chaos_report_project_list"):
     """
     For each project in a list check if exists the correspondent key in redis and performs
     an http request against the url specified, retrieves basic informations of the request
     and register the collected data into redis
     """
-    for project in r.get('chaos_report_project_list').decode().split(','):
+    for project in r.get(key_project_list).decode().split(','):
         chaos_program_key = f"chaos_report_project_{project}"
 
         if r.exists(chaos_program_key) and check_if_json_is_valid(r.get(chaos_program_key)):
@@ -79,6 +79,71 @@ def collect_data_for_projects():
             else:
                 r.set(check_url_status_code_key, response.status_code)
                 r.set(check_url_elapsed_time_key, float(response.elapsed.total_seconds()))
+
+def compare_time(
+        pod,
+        now: int,
+        api_instance,
+        pod_time: int, 
+        pod_time_key: str, 
+        log_kinv_suffix: str,
+    ):
+    """
+    Perform a check between the current timestamp and the pod timestamp, if the difference
+    is major than 120 it tries to delete the pod from kubernetes and the key from redis
+    """
+    logging.debug(f"{log_kinv_suffix} For {pod.metadata.name} comparing now:{now} with pod_time:{pod_time}")
+
+    if (now - pod_time > 120):
+        try:
+            api_instance.delete_namespaced_pod(pod.metadata.name, namespace = pod.metadata.namespace)
+            logging.debug(f"{log_kinv_suffix} Deleting pod {pod.metadata.name}")
+            r.delete(pod_time_key)
+        except ApiException as e:
+            logging.debug(e)
+
+def pod_computation(pod, api_instance):
+    """
+    Check the pod status and update the redis keys according to checked status 
+    """
+    log_kinv_suffix      = f"[k-inv][metrics_loop]"
+    pod_time_key         = f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}"
+    found_pod_log_string = f"{log_kinv_suffix} Found pod {pod.metadata.name}. It is in {pod.status.phase} phase."
+
+    if pod.status.phase in ['Pending', 'Running']:
+        logging.debug(f"{found_pod_log_string} Incrementing current_chaos_job_pod Redis key")
+        r.incr('current_chaos_job_pod')
+
+    if pod.status.phase not in ['Pending', 'Running'] and not r.exists(pod_time_key):
+        logging.debug(f"{found_pod_log_string} Tracking time in {pod_time_key} Redis key")
+        r.set(pod_time_key, int(time.time()))
+
+    elif pod.status.phase not in ['Pending', 'Running'] and r.exists(pod_time_key):
+        logging.debug(f"{found_pod_log_string} Comparing time in {pod_time_key} Redis key with now")
+        
+        now      = int(time.time())
+        pod_time = int(r.get(pod_time_key))
+
+        compare_time(
+            pod, 
+            now, 
+            pod_time, 
+            api_instance,
+            pod_time_key, 
+            log_kinv_suffix, 
+        )
+
+    if pod.metadata.labels.get('chaos-codename'):
+        codename = pod.metadata.labels.get('chaos-codename')
+        job_name = pod.metadata.labels.get('job-name').replace("-","_")
+        exp_name = pod.metadata.labels.get('experiment-name')
+
+        if pod.status.phase in ["Pending", "Running", "Succeeded"]:
+            r.set(f"chaos_jobs_status:{codename}:{exp_name}:{job_name}", 1.0)
+        else:
+            r.set(f"chaos_jobs_status:{codename}:{exp_name}:{job_name}", -1)
+
+        r.set(f"chaos_jobs_pod_phase:{codename}:{exp_name}:{job_name}", pod.status.phase)
 
 if __name__ == "__main__":
     r = redis.Redis(unix_socket_path='/tmp/redis.sock')
@@ -119,42 +184,6 @@ if __name__ == "__main__":
         r.set("current_chaos_job_pod", 0)
 
         for pod in api_response.items:
-    
-            if pod.status.phase in ['Pending', 'Running']:
-                logging.debug(f"[k-inv][metrics_loop] Found pod {pod.metadata.name}. It is in {pod.status.phase} phase. Incrementing current_chaos_job_pod Redis key")
-                r.incr('current_chaos_job_pod')
-
-            pod_time_key = f"pod:time:{pod.metadata.namespace}:{pod.metadata.name}"
-
-            if pod.status.phase not in ['Pending', 'Running'] and not r.exists(pod_time_key):
-                logging.debug(f"[k-inv][metrics_loop] Found pod {pod.metadata.name}. It is in {pod.status.phase} phase. Tracking time in pod:time:{pod.metadata.namespace}:{pod.metadata.name} Redis key")
-                r.set(pod_time_key, int(time.time()))
-            elif pod.status.phase not in ['Pending', 'Running'] and r.exists(pod_time_key):
-                logging.debug(f"[k-inv][metrics_loop] Found pod {pod.metadata.name}. It is in {pod.status.phase} phase. Comparing time in pod:time:{pod.metadata.namespace}:{pod.metadata.name} Redis key with now")
-                
-                now      = int(time.time())
-                pod_time = int(r.get(pod_time_key))
-
-                logging.debug(f"[k-inv][metrics_loop] For {pod.metadata.name} comparing now:{now} with pod_time:{pod_time}")
-
-                if (now - pod_time > 120):
-                    try:
-                        api_instance.delete_namespaced_pod(pod.metadata.name, namespace = pod.metadata.namespace)
-                        logging.debug(f"[k-inv][metrics_loop] Deleting pod {pod.metadata.name}")
-                        r.delete(pod_time_key)
-                    except ApiException as e:
-                        logging.debug(e)
-
-            if pod.metadata.labels.get('chaos-codename'):
-                codename = pod.metadata.labels.get('chaos-codename')
-                job_name = pod.metadata.labels.get('job-name').replace("-","_")
-                exp_name = pod.metadata.labels.get('experiment-name')
-
-                if pod.status.phase in ["Pending", "Running", "Succeeded"]:
-                    r.set(f"chaos_jobs_status:{codename}:{exp_name}:{job_name}", 1.0)
-                else:
-                    r.set(f"chaos_jobs_status:{codename}:{exp_name}:{job_name}", -1)
-
-                r.set(f"chaos_jobs_pod_phase:{codename}:{exp_name}:{job_name}", pod.status.phase)
+            pod_computation(pod, api_instance)
 
         time.sleep(1)
