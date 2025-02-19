@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """
+This is a helper that allows to create pods used to perform chaos engineering against a kubernetes cluster
+
 Usage:
     python3 start.py [filename] [kubernetes-host]
 
