@@ -160,7 +160,7 @@ def perform_experiment(exp: dict, parsed_yaml: dict):
 if __name__ == "__main__":
     logging.basicConfig(
         level  = os.environ.get("LOGLEVEL", "INFO"),
-        format = "%(asctime)s [PROGRAMMING_MODE] %(message)s"
+        format = "%(asctime)s [programming_mode] %(message)s"
     )
     logging.info('Starting script...')
 

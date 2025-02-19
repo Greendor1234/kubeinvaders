@@ -156,7 +156,10 @@ def pod_computation(pod, api_instance) -> None:
 if __name__ == "__main__":
     r = redis.Redis(unix_socket_path='/tmp/redis.sock')
 
-    logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
+    logging.basicConfig(
+        level  = os.environ.get("LOGLEVEL", "INFO"),
+        format = "%(asctime)s [pod_metrics] %(message)s"
+    )
     logging.getLogger('kubernetes').setLevel(logging.ERROR)
 
     logging.debug('Starting script for KubeInvaders metrics loop')
