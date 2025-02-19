@@ -45,15 +45,16 @@ jobs:
 
     - name: Deploy with helm
       run: |
-        helm upgrade --install kubeinvaders \
-          --set-string config.target_namespace="ns-1" \
-          -n kubeinvaders \
-          helm-charts/kubeinvaders \
+        helm upgrade --install \
           --atomic \
+          kubeinvaders \
+          -n kubeinvaders \
           --create-namespace \
+          helm-charts/kubeinvaders \
           --set ingress.enabled=true \
-          --set ingress.hostName=kubeinvaders.local \
           --set deployment.image.tag=latest \
+          --set ingress.hostName=kubeinvaders.local \
+          --set-string config.target_namespace="ns-1" \
           --set deployment.image.repository=${{ vars.REGISTRY_ADDRESS }}/${{ vars.REGISTRY_USERNAME }}
 
     - name: Check if service is available
