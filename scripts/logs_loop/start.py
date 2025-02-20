@@ -95,22 +95,30 @@ def create_pod_list(logid: str, api_responses: list, current_regex: str) -> list
     return webtail_pods
                             
 def log_cleaner(logid):
+    """
+    Clean logs from Redis
+    """
     if not r.exists(f"do_not_clean_log:{logid}"):
-
         for key in r.scan_iter(f"log_time:{logid}:*"):
             r.delete(key)
         for key in r.scan_iter(f"log:{logid}:*"):
-                r.delete(key)
+            r.delete(key)
         r.set(f"do_not_clean_log:{logid}", "1")
         r.expire(f"do_not_clean_log:{logid}", 60)
         r.set(f"log_status:{logid}", f"[k-inv][logs-loop] Logs (id: {logid}) has been cleaned")
 
-def get_regex(logid):
+def get_regex(logid: str):
+    """
+    Check if key exists in redis, if not set log_status else return the key
+    """
     if not r.exists(f"log_pod_regex:{logid}"):
         r.set(f"log_status:{logid}", f"[k-inv][logs-loop] ERROR. Regex has not been configured or is invalid")
     return r.get(f"log_pod_regex:{logid}")
 
 def compute_line(api_response_line, container):
+    """
+    TBD
+    """
     logging.debug(f"[logid:{logid}] API Response: ||{api_response_line}||")
     logrow = f"""
 <div class='row' style='margin-top: 2%; color: #1d1919;'>
@@ -161,6 +169,102 @@ def compute_line(api_response_line, container):
     r.set(f"log_time:{logid}:{pod.metadata.name}:{container}", time.time())
     r.expire(f"log:{logid}:{pod.metadata.name}:{container}:{sha256log}", 60)
 
+def redis_connection(filename: str):
+    """
+    Try to connect with redis through the socket path
+    """
+    options = {
+        "charset"          : "utf-8",
+        "decode_responses" : True
+    }
+    return redis.Redis(unix_socket_path = filename, **options) if pathlib.Path(filename).exists() else redis.Redis("127.0.0.1", **options)
+
+def get_api_responses(current_regex: str, log_prefix: str):
+    """
+    Return pods for each namespace in the namespace list
+    """
+    try:
+        json_re      = json.loads(current_regex)
+        namespace_re = json_re["namespace"]
+
+        logging.debug(f"{log_prefix} Taking list of namespaces")
+
+        n_list = api_instance.list_namespace()
+        return [ api_instance.list_namespaced_pod(n.metadata.name) for n in n_list.items if re.search(f"{namespace_re}", n.metadata.name) ]
+    except ApiException as e:
+        logging.error(e)
+        return []
+    
+def compute_container(container, only_one_container):
+    """
+    TBD
+    """
+    logging.debug(f"{log_prefix} Container {container} on pod {pod.metadata.name} has accepted phase for taking logs")
+    try:
+        if r.exists(f"log_time:{logid}:{pod.metadata.name}:{container}"):
+            latest_log_tail_time = float(r.get(f"log_time:{logid}:{pod.metadata.name}:{container}"))
+            since = int(time.time() - float(latest_log_tail_time)) + 1
+        else:
+            latest_log_tail_time = time.time()
+            pod_start_time = int(datetime.datetime.timestamp(pod.status.start_time))
+            logging.debug(f"{log_prefix} POD's start time {pod_start_time}")
+            since = int(time.time() - pod_logs_sec) + 1
+        
+        logging.debug(f"{log_prefix} pod_start_time_sec is {pod_start_time_sec}")
+
+        if since > pod_start_time_sec:
+            return
+
+        logging.debug(f"{log_prefix} Time types: {type(latest_log_tail_time)} {type(time.time())} {type(since)} since={since}")                    
+        logging.debug(f"{log_prefix} Calling K8s API for reading logs of {pod.metadata.name} container {container} in namespace {pod.metadata.namespace} since {since} seconds - phase {pod.status.phase}")
+
+        if only_one_container:
+            api_response = api_instance.read_namespaced_pod_log(
+                name          = pod.metadata.name,
+                namespace     = pod.metadata.namespace,
+                since_seconds = since
+            )
+        else:
+            api_response = api_instance.read_namespaced_pod_log(
+                name          = pod.metadata.name, 
+                namespace     = pod.metadata.namespace, 
+                since_seconds = since, 
+                container     = container
+            )
+
+        logging.debug(f"{log_prefix} Computing K8s API response for reading logs of {pod.metadata.name} in namespace {pod.metadata.namespace} - phase {pod.status.phase}")
+        logging.debug(f"{log_prefix} {type(api_response)} {api_response}")
+
+        r.set(f"log_time:{logid}:{pod.metadata.name}:{container}", time.time())
+        
+        if not re.search(r'[\w]+', api_response):
+            logging.debug(f"{log_prefix} API Response for reading logs of {pod.metadata.name} in namespace {pod.metadata.namespace} is still empty")
+            return
+
+        compute_line(api_response, container)
+
+        for api_response_line in api_response if isinstance(api_response, list) else api_response.splitlines():
+            logging.debug(f"{log_prefix} Computing log line {api_response_line}")
+            compute_line(api_response_line, container)         
+
+    except ApiException as e:
+        logging.debug(f"[k-inv][logs-loop] EXCEPTION {e}")
+
+def compute_pod(pod):
+    """
+    TBD
+    """
+    logging.debug(f"{log_prefix} Taking logs from {pod.metadata.name}")
+    container_list = [ container.name for container in pod.spec.containers ]
+    
+    only_one_container = True if len(container_list) == 1 else False
+
+    for container in container_list:
+        logging.debug(f"{log_prefix} Listing containers of {pod.metadata.name}. Computing {container} phase: {pod.status.phase}")
+        
+        if pod.status.phase not in ["Unknown", "Pending"]:
+            compute_container(container, only_one_container)
+
 if __name__ == "__main__":
     logging.basicConfig(
         level  = os.environ.get("LOGLEVEL", "DEBUG"),
@@ -170,19 +274,16 @@ if __name__ == "__main__":
 
     logging.debug('Starting script for KubeInvaders taking logs from pods...')
 
-    file = pathlib.Path('/tmp/redis.sock')
-
-    if file.exists():
-        r = redis.Redis(unix_socket_path='/tmp/redis.sock', charset="utf-8", decode_responses=True)
-    else:
-        r = redis.Redis("127.0.0.1", charset="utf-8", decode_responses=True)
+    r = redis_connection('/tmp/redis.sock')
 
     if os.environ.get("DEV"):
         logging.debug("Setting env var for dev...")
+
         r.set("log_pod_regex", '{"since": 60, "pod":".*", "namespace":"namespace1", "labels":".*", "annotations":".*", "containers": ".*"}')
         r.set("logs_enabled:aaaa", 1)
         r.expire("logs_enabled:aaaa", 10)
         r.set("programming_mode", 0)
+
         logging.debug(r.get("log_pod_regex:aaaa"))
         logging.debug(r.get("logs_enabled:aaaa"))
 
@@ -223,26 +324,10 @@ if __name__ == "__main__":
                 logging.debug(f"[logid:{logid}] Checking do_not_clean_log Redis key")
                 log_cleaner(logid)
 
-                try:
-                    json_re = json.loads(current_regex)
-                    namespace_re = json_re["namespace"]
-                    logging.debug(f"{log_prefix} Taking list of namespaces")
-                    namespaces_list = api_instance.list_namespace()
-                    api_responses = []
-
-                    for namespace in namespaces_list.items:
-                        logging.debug(f"{log_prefix} Found namespace {namespace.metadata.name}")
-                        if re.search(f"{namespace_re}", namespace.metadata.name):
-                            logging.debug(f"{log_prefix}[NAMESPACE-MATCHING] {namespace.metadata.name}")
-                            logging.debug(f"{log_prefix} Taking pods from namespace {namespace.metadata.name}")
-                            api_responses.append(api_instance.list_namespaced_pod(namespace.metadata.name))
-
-                except ApiException as e:
-                    logging.debug(e)
-
-                webtail_pods = create_pod_list(logid, api_responses, current_regex)
-                json_re = json.loads(current_regex)
-                containers_re = json_re["containers"]
+                api_responses    = get_api_responses(current_regex, log_prefix)
+                webtail_pods     = create_pod_list(logid, api_responses, current_regex)
+                json_re          = json.loads(current_regex)
+                containers_re    = json_re["containers"]
                 webtail_pods_len = len(webtail_pods)
                 
                 if not r.exists(f"logs:chaoslogs-{logid}-count"):
@@ -252,77 +337,15 @@ if __name__ == "__main__":
                     old_logs = r.get(f"logs:chaoslogs-{logid}-{latest_chaos_logs_count}")
 
                 pod_start_time_sec = int(json_re["pod_start_time_sec"])
-                pod_logs_sec =  int(json_re["pod_logs_sec"])
+                pod_logs_sec       = int(json_re["pod_logs_sec"])
+
                 r.set(f"logs:webtail_pods_len:{logid}", webtail_pods_len)
                 r.set(f"pods_match_regex:{logid}", webtail_pods_len)
+
                 logging.debug(f"{log_prefix} Current Regex: {current_regex}")
                 
                 for pod in webtail_pods:
-                    if pod.status.phase == "Unknown" and pod.status.phase == "Pending":
+                    if pod.status.phase in ["Unknown", "Pending"]:
                         continue
-                    logging.debug(f"{log_prefix} Taking logs from {pod.metadata.name}")
-                    container_list = []
-                    for container in pod.spec.containers:
-                        container_list.append(container.name)
-                    
-                    if len(container_list) == 1:
-                        only_one_container = True
-                    else:
-                        only_one_container = False
-
-                    for container in container_list:
-                        logging.debug(f"{log_prefix} Listing containers of {pod.metadata.name}. Computing {container} phase: {pod.status.phase}")
-                        if pod.status.phase != "Unknown" and pod.status.phase != "Pending":
-                            logging.debug(f"{log_prefix} Container {container} on pod {pod.metadata.name} has accepted phase for taking logs")
-                            try:
-                                if r.exists(f"log_time:{logid}:{pod.metadata.name}:{container}"):
-                                    latest_log_tail_time = float(r.get(f"log_time:{logid}:{pod.metadata.name}:{container}"))
-                                    since = int(time.time() - float(latest_log_tail_time)) + 1
-                                else:
-                                    latest_log_tail_time = time.time()
-                                    pod_start_time = int(datetime.datetime.timestamp(pod.status.start_time))
-                                    logging.debug(f"{log_prefix} POD's start time {pod_start_time}")
-                                    since = int(time.time() - pod_logs_sec) + 1
-                                
-                                logging.debug(f"{log_prefix} pod_start_time_sec is {pod_start_time_sec}")
-
-                                if since > pod_start_time_sec:
-                                    continue
-
-                                logging.debug(f"{log_prefix} Time types: {type(latest_log_tail_time)} {type(time.time())} {type(since)} since={since}")                    
-                                logging.debug(f"{log_prefix} Calling K8s API for reading logs of {pod.metadata.name} container {container} in namespace {pod.metadata.namespace} since {since} seconds - phase {pod.status.phase}")
-
-                                if only_one_container:
-                                    api_response = api_instance.read_namespaced_pod_log(name=pod.metadata.name, namespace=pod.metadata.namespace, since_seconds=since)
-                                else:
-                                    api_response = api_instance.read_namespaced_pod_log(name=pod.metadata.name, namespace=pod.metadata.namespace, since_seconds=since, container=container)
-
-                                logging.debug(f"{log_prefix} Computing K8s API response for reading logs of {pod.metadata.name} in namespace {pod.metadata.namespace} - phase {pod.status.phase}")
-                                logging.debug(f"{log_prefix} {type(api_response)} {api_response}")
-
-                                r.set(f"log_time:{logid}:{pod.metadata.name}:{container}", time.time())
-                                
-                                if not re.search(r'[\w]+', api_response):
-                                    logging.debug(f"{log_prefix} API Response for reading logs of {pod.metadata.name} in namespace {pod.metadata.namespace} is still empty")
-                                    continue
-
-                                compute_line(api_response, container)
-                                
-                                logs = ""
-
-                                if type(api_response) is list:
-                                    for api_response_line in api_response:
-                                        logging.debug(f"{log_prefix} Computing log line {api_response_line}")
-                                        #logs = f"{logs}</br>{api_response_line}"
-                                        compute_line(logs, container)
-
-                                else:
-                                    for api_response_line in api_response.splitlines():
-                                        logging.debug(f"{log_prefix} Computing log line {api_response_line}")
-                                        compute_line(logs, container)
-                                        #logs = f"{logs}</br>{api_response_line}"
-
-
-                            except ApiException as e:
-                                logging.debug(f"[k-inv][logs-loop] EXCEPTION {e}")
+                    compute_pod(pod)
         time.sleep(1)
